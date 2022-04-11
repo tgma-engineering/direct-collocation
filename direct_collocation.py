@@ -48,7 +48,7 @@ class TrapezoidOpt:
         self.J_jac = J_jac
         self.J_hess = J_hess
 
-        self.f = f  # State dynamics of the form x_dot = f(x, u, t)
+        self.f = f  # State dynamics of the form x_dot = f(x, u)
         self.f_jac = f_jac
         self.f_hess = f_hess
 
@@ -266,19 +266,42 @@ class TrapezoidOpt:
         u_res = np.reshape(u_res_r, (N+1, m))
 
         # Real functions of time with spline interpolation between collocation points
-        func_x = lambda t : self._func_x(x_res, t)
-        func_u = lambda t : self._func_u(u_res, t)
+        func_x = lambda t : self._func_x(x_res, u_res, tf_res, t)
+        func_u = lambda t : self._func_u(u_res, tf_res, t)
 
         return x_res, u_res, tf_res, func_x, func_u
     
-    def _func_x(self, x, t):
+    def _func_x(self, x, u, tf, t):
         """
         Computes a continuous function x(t) from the x values at discrete collocation points.
         """
-        pass
+        t_s = t / tf
+        k = np.argwhere(self.coll_grid <= t_s).squeeze()[-1]  # Get Collocation Point right before time t.
+
+        # Edge case
+        if k == len(self.coll_grid) - 1:
+            return x[k]
+        
+        h_k = tf * (self.coll_grid[k+1] - self.coll_grid[k])
+        tau = t - tf * self.coll_grid[k]
+
+        f_ka = self.f(x[k], u[k])
+        f_kb = self.f(x[k+1], u[k+1])
+
+        return x[k] + f_ka * tau + tau**2 / (2 * h_k) * (f_kb - f_ka)  # Quadratic Spline Approximation
     
-    def _func_u(self, u, t):
+    def _func_u(self, u, tf, t):
         """
         Computes a continuous function u(t) from the u values at discrete collocation points.
         """
-        pass
+        t_s = t / tf
+        k = np.argwhere(self.coll_grid <= t_s).squeeze()[-1]  # Get Collocation Point right before time t.
+
+        # Edge case
+        if k == len(self.coll_grid) - 1:
+            return u[k]
+
+        h_k = tf * (self.coll_grid[k+1] - self.coll_grid[k])
+        tau = t - tf * self.coll_grid[k]
+
+        return u[k] + tau / h_k * (u[k+1] - u[k])  # Linear interpolation
