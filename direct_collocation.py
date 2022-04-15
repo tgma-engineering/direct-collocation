@@ -11,6 +11,7 @@ References:
 """
 
 import numpy as np
+from matplotlib import pyplot as plt
 
 from scipy.optimize import Bounds
 from scipy.optimize import LinearConstraint
@@ -62,8 +63,8 @@ class TrapezoidOpt:
         Similar for x_h, u_l and u_h.
         tf_l and tf_h are scalars.
         """
-        bounds_l = np.concatenate((x_l, u_l, tf_l))
-        bounds_h = np.concatenate((x_h, u_h, tf_h))
+        bounds_l = np.concatenate((x_l, u_l, np.array([tf_l])))
+        bounds_h = np.concatenate((x_h, u_h, np.array([tf_h])))
 
         self.bounds = Bounds(bounds_l, bounds_h)
     
@@ -90,7 +91,7 @@ class TrapezoidOpt:
         tf = s[-1]
 
         x = np.reshape(x_r, (N+1, n))
-        u = np.reshpae(u_r, (N+1, m))
+        u = np.reshape(u_r, (N+1, m))
 
         f_res = np.array([self.f(x[k], u[k]) for k in range(N+1)])  # (N+1) x n
 
@@ -113,7 +114,7 @@ class TrapezoidOpt:
         tf = s[-1]
 
         x = np.reshape(x_r, (N+1, n))
-        u = np.reshpae(u_r, (N+1, m))
+        u = np.reshape(u_r, (N+1, m))
 
         I = np.eye(n)  # n x n
 
@@ -154,7 +155,7 @@ class TrapezoidOpt:
         tf = s[-1]
 
         x = np.reshape(x_r, (N+1, n))
-        u = np.reshpae(u_r, (N+1, m))
+        u = np.reshape(u_r, (N+1, m))
 
         f_jac_res = np.array([self.f_jac(x[i], u[i]) for i in range(N+1)])  # (N+1) x n x (n+m)
         f_jac_x_res = f_jac_res[:, :, :n]  # (N+1) x n x n
@@ -250,14 +251,16 @@ class TrapezoidOpt:
         x0_r = np.reshape(x0, n * (N+1))
         u0_r = np.reshape(u0, m * (N+1))
 
-        s0 = np.concatenate((x0_r, u0_r, tf0))
+        s0 = np.concatenate((x0_r, u0_r, np.array([tf0])))
 
         constr = self.lin_constr.copy()
         constr.append(self.coll_constr)
 
-        s_res = minimize(self._cost, s0, method='trust-constr', jac=self._cost_jac,
+        res = minimize(self._cost, s0, method='trust-constr', jac=self._cost_jac,
                          hess=self._cost_hess, bounds=self.bounds, constraints=constr)
         
+        s_res = res.x
+
         x_res_r = s_res[:n*(N+1)]
         u_res_r = s_res[n*(N+1):-1]
         tf_res = s_res[-1]
@@ -276,7 +279,7 @@ class TrapezoidOpt:
         Computes a continuous function x(t) from the x values at discrete collocation points.
         """
         t_s = t / tf
-        k = np.argwhere(self.coll_grid <= t_s).squeeze()[-1]  # Get Collocation Point right before time t.
+        k = np.atleast_1d(np.argwhere(self.coll_grid <= t_s).squeeze())[-1]  # Get Collocation Point right before time t.
 
         # Edge case
         if k == len(self.coll_grid) - 1:
@@ -295,7 +298,7 @@ class TrapezoidOpt:
         Computes a continuous function u(t) from the u values at discrete collocation points.
         """
         t_s = t / tf
-        k = np.argwhere(self.coll_grid <= t_s).squeeze()[-1]  # Get Collocation Point right before time t.
+        k = np.atleast_1d(np.argwhere(self.coll_grid <= t_s).squeeze())[-1]  # Get Collocation Point right before time t.
 
         # Edge case
         if k == len(self.coll_grid) - 1:
@@ -305,3 +308,58 @@ class TrapezoidOpt:
         tau = t - tf * self.coll_grid[k]
 
         return u[k] + tau / h_k * (u[k+1] - u[k])  # Linear interpolation
+
+
+"""
+Classic Block Move Example
+"""
+if __name__ == '__main__':
+    f = lambda x, u : np.array([x[1], u[0]], dtype=np.float64)  # x_dot_dot = u
+    f_jac = lambda x, u : np.array([[0, 1, 0], [0, 0, 1]], dtype=np.float64)
+    f_hess = lambda x, u : np.zeros((2, 3, 3), dtype=np.float64)
+
+    J = lambda x, u, tf : (u**2).sum()
+    J_jac = lambda x, u, tf : np.concatenate((np.zeros_like(x), 2*u, np.zeros(1)))
+    J_hess = lambda x, u, tf : np.diag(np.concatenate((np.zeros_like(x), np.ones_like(u)*2, np.zeros(1))))
+
+    N = 100
+    n = 2
+    m = 1
+    coll_grid = np.linspace(0, 1, N+1)
+
+    x_l = np.ones(n*(N+1)) * -np.inf
+    x_l[:2] = np.array([0., 0.])
+    x_l[-2:] = np.array([1., 0.])
+    x_h = np.ones(n*(N+1)) * np.inf
+    x_h[:2] = np.array([0., 0.])
+    x_h[-2:] = np.array([1., 0.])
+    u_l = np.ones(m*(N+1)) * -np.inf
+    u_h = np.ones(m*(N+1)) * np.inf
+    tf_l = 1.0
+    tf_h = 1.0
+
+    x0 = np.ones(n*(N+1))
+    x0[::2] = np.linspace(0, 1, N+1)
+    u0 = np.zeros(m*(N+1))
+    tf0 = 1.0
+
+    optimizer = TrapezoidOpt(N, n, m, coll_grid, J, J_jac, J_hess, f, f_jac, f_hess)
+    optimizer.set_bounds(x_l, x_h, u_l, u_h, tf_l, tf_h)
+    x_res, u_res, tf_res, func_x, func_u = optimizer.optimize(x0, u0, tf0)
+
+    z = 100
+    t = np.linspace(0, 1, z)
+    x = np.empty(z)
+    v = np.empty(z)
+    u = np.empty(z)
+
+    for i in range(z):
+        x[i] = func_x(t[i])[0]
+        v[i] = func_x(t[i])[1]
+        u[i] = func_u(t[i])[0]
+
+    plt.plot(t, x, 'k-')
+    plt.plot(t, v, 'b-')
+    plt.plot(t, u, 'r-')
+    plt.grid(True)
+    plt.savefig('block_move.png', dpi=400)
